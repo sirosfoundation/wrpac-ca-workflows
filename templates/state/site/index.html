@@ -1,0 +1,21 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>__DOMAIN__</title>
+<style>
+body{font:16px/1.55 system-ui,sans-serif;max-width:40rem;margin:3rem auto;padding:0 1.25rem;color:#1a222c;background:#fff}
+h1{font-size:1.5rem;margin:0 0 .25rem}p{margin:.75rem 0}code{background:#eef1f5;padding:.1em .35em;border-radius:3px}
+table{border-collapse:collapse;width:100%;margin:1rem 0}td,th{text-align:left;padding:.45rem .5rem;border-bottom:1px solid #d6dbe2;vertical-align:top}th{font-size:.8rem;text-transform:uppercase;letter-spacing:.04em;color:#7b8592}
+.note{color:#4a5563;font-size:.92rem}
+</style>
+<h1>__DOMAIN__</h1>
+<p class="note">Registrar and Access CA for wallet-relying parties in this ecosystem. Pilot infrastructure, not a supervised trust service.</p>
+<table>
+<tr><th>Resource</th><th>Format</th></tr>
+<tr><td><a href="register.json">register.json</a></td><td>public register of wallet-relying parties (CIR 2025/848 Annex II view)</td></tr>
+<tr><td><a href="crl.der">crl.der</a></td><td>WRPAC certificate revocation list, DER</td></tr>
+<tr><td><a href="status-list.jwt">status-list.jwt</a></td><td>WRPRC status list token</td></tr>
+<tr><td><a href="lote.json">lote.json</a> · <a href="lote.jws">lote.jws</a></td><td>trust anchors, ETSI TS 119 602 LoTE</td></tr>
+<tr><td><a href="tsl.xml">tsl.xml</a></td><td>trust anchors, ETSI TS 119 612 TSL</td></tr>
+</table>
+<p>To register, open a pull request at <a href="https://github.com/__REGISTRY_REPO__">__REGISTRY_REPO__</a>. Issued certificates are in <a href="https://github.com/__STATE_REPO__">__STATE_REPO__</a>.</p>

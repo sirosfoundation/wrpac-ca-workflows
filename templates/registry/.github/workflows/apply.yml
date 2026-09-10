@@ -1,0 +1,17 @@
+name: apply
+on:
+  push:
+    branches: [main]
+    paths: [clients/**]
+permissions:
+  contents: read
+  pull-requests: write
+jobs:
+  apply:
+    uses: sirosfoundation/wrpac-ca-workflows/.github/workflows/apply.yml@main
+    with:
+      state-repo: __STATE_REPO__
+      scheme-name: __SCHEME_NAME__
+      operator: __ORG__
+      territory: __COUNTRY__
+    secrets: inherit

@@ -1,0 +1,19 @@
+# Re-sign revocation data inside its validity. Bootstrap recorded one week for
+# both the CRL and the status list; every second day leaves room for one failed
+# run and a fix.
+name: publish
+on:
+  schedule:
+    - cron: '17 3 */2 * *'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  publish:
+    uses: sirosfoundation/wrpac-ca-workflows/.github/workflows/publish.yml@main
+    with:
+      state-repo: __STATE_REPO__
+      scheme-name: __SCHEME_NAME__
+      operator: __ORG__
+      territory: __COUNTRY__
+    secrets: inherit

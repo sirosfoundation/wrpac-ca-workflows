@@ -1,0 +1,26 @@
+# Run once. Creates the Access CA and registrar certificates over the keys the
+# ceremony put on the HSM, and the first published set. The base URL is
+# permanent from here on.
+name: bootstrap
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  bootstrap:
+    uses: sirosfoundation/wrpac-ca-workflows/.github/workflows/bootstrap.yml@main
+    with:
+      state-repo: __STATE_REPO__
+      base-url: https://__DOMAIN__
+      ca-name: __CA_NAME__
+      registrar-name: __REG_NAME__
+      organization: __ORG__
+      country: __COUNTRY__
+      scheme-name: __SCHEME_NAME__
+      operator: __ORG__
+      territory: __COUNTRY__
+      crl-validity: 168h
+      status-list-validity: 168h
+      ca-key-label: wrpac-ca
+      registrar-key-label: wrpac-registrar
+    secrets: inherit

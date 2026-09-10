@@ -1,0 +1,139 @@
+# Reconcile the register against the merged client specs, on a runner with the
+# instance's HSM. Triggered by the registry repository on push to main.
+#
+# The PIN reaches this job only as an Environment secret, which the caller's
+# Environment releases after its required reviewers approve. The HSM itself is
+# reachable only from the runner host. Neither GitHub nor the host alone can
+# sign.
+name: apply
+
+on:
+  workflow_call:
+    inputs:
+      state-repo:
+        required: true
+        type: string
+      runner-group:
+        type: string
+        default: signers
+      environment:
+        type: string
+        default: ca
+      pkcs11-conf:
+        description: YUBIHSM_PKCS11_CONF on the runner host
+        type: string
+        default: /etc/yubihsm_pkcs11.conf
+      scheme-name:
+        type: string
+        default: SIROS wallet-relying party trust anchors
+      operator:
+        type: string
+        default: SIROS Foundation
+      territory:
+        type: string
+        default: SE
+      tool-version:
+        type: string
+        default: v0.3.0
+      tool-sha256-amd64:
+        type: string
+        default: 029ce1e69b4ea03fbe20603f8cd7554086307d2fefe1d5af4b868ac12573ee72
+      tool-sha256-arm64:
+        type: string
+        default: 204c02b3fed488552c910490e489b723f3aa0e407c3bf1420e023d5d7a8bf311
+      workflows-ref:
+        type: string
+        default: main
+    secrets:
+      YUBIHSM_PIN:
+        description: auth key id (4 hex) + password, from the caller's Environment
+        required: true
+      STATE_DEPLOY_KEY:
+        description: private half of the state repository's write deploy key
+        required: true
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  apply:
+    runs-on:
+      group: ${{ inputs.runner-group }}
+      labels: [self-hosted, Linux]
+    environment: ${{ inputs.environment }}
+    # Every HSM job of one instance shares this group: the CRL number and the
+    # status list indices must advance in one order.
+    concurrency:
+      group: wrpac-ca-${{ github.repository }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: ${{ inputs.state-repo }}
+          ssh-key: ${{ secrets.STATE_DEPLOY_KEY }}
+          path: state
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: sirosfoundation/wrpac-ca-workflows
+          ref: ${{ inputs.workflows-ref }}
+          path: .wrpac-ca
+
+      - name: Install siros-wrpac-tool ${{ inputs.tool-version }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: .wrpac-ca/scripts/install-tool.sh "${{ inputs.tool-version }}" "${{ inputs.tool-sha256-amd64 }}" "${{ inputs.tool-sha256-arm64 }}"
+
+      - name: Plan and guard
+        run: |
+          set -euo pipefail
+          siros-wrpac-tool apply -d state/deployment --from clients --dry-run | tee plan.txt
+          BEFORE="${{ github.event.before }}"
+          if [[ -z "$BEFORE" || "$BEFORE" =~ ^0+$ ]] || ! git cat-file -e "$BEFORE" 2>/dev/null; then
+            git ls-files clients > changed.txt      # first push or force push: treat every spec as touched
+          else
+            git diff --name-only "$BEFORE" "${{ github.sha }}" > changed.txt
+          fi
+          .wrpac-ca/scripts/plan-guard.sh plan.txt changed.txt
+
+      - name: Apply
+        env:
+          SIROS_WRPAC_PKCS11_PIN: ${{ secrets.YUBIHSM_PIN }}
+          YUBIHSM_PKCS11_CONF: ${{ inputs.pkcs11-conf }}
+        run: |
+          set -euo pipefail
+          siros-wrpac-tool apply -d state/deployment --from clients --out state/clients
+          siros-wrpac-tool lote -d state/deployment --scheme-name "${{ inputs.scheme-name }}" --operator "${{ inputs.operator }}" --territory "${{ inputs.territory }}"
+          siros-wrpac-tool tsl  -d state/deployment --scheme-name "${{ inputs.scheme-name }}" --operator "${{ inputs.operator }}" --territory "${{ inputs.territory }}"
+
+      - name: Commit state
+        id: commit
+        run: .wrpac-ca/scripts/commit-state.sh state "apply ${{ github.repository }}@${GITHUB_SHA::12}"
+
+      - name: Report back on the pull request
+        if: steps.commit.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          STATE_URL="https://github.com/${{ inputs.state-repo }}"
+          {
+            echo "### Applied"
+            echo
+            echo '```'; cat plan.txt; echo '```'
+            echo
+            echo "State commit: ${STATE_URL}/commit/${{ steps.commit.outputs.sha }}"
+            echo
+            echo "Issued material, per client:"
+            tail -n +2 plan.txt | awk '$1=="issue" || $1=="reissue" {print $2}' | while read -r id; do
+              echo "- \`${id}\`: ${STATE_URL}/tree/${{ steps.commit.outputs.sha }}/clients/${id} (\`wrpac.pem\`, \`wrprc.jwt\`)"
+            done
+            echo
+            echo "_Published to the registrar's CRL, status list, register, LoTE and TSL by the state repository's Pages deploy._"
+          } > comment.md
+          for pr in $(gh api "repos/${{ github.repository }}/commits/${{ github.sha }}/pulls" --jq '.[].number'); do
+            .wrpac-ca/scripts/pr-comment.sh "${{ github.repository }}" "$pr" wrpac-applied comment.md
+          done

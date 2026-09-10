@@ -1,0 +1,81 @@
+# Pull request check for an instance's registry repository: validate the client
+# specs and show what apply would do. Runs on a GitHub-hosted runner and never
+# touches a key; apply --dry-run returns before the CA key is loaded.
+name: plan
+
+on:
+  workflow_call:
+    inputs:
+      state-repo:
+        description: owner/name of the instance's state repository
+        required: true
+        type: string
+      tool-version:
+        type: string
+        default: v0.3.0
+      tool-sha256-amd64:
+        type: string
+        default: 029ce1e69b4ea03fbe20603f8cd7554086307d2fefe1d5af4b868ac12573ee72
+      tool-sha256-arm64:
+        type: string
+        default: 204c02b3fed488552c910490e489b723f3aa0e407c3bf1420e023d5d7a8bf311
+      workflows-ref:
+        description: ref of sirosfoundation/wrpac-ca-workflows to take scripts from (match the `uses:` ref)
+        type: string
+        default: main
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: ${{ inputs.state-repo }}
+          path: state
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: sirosfoundation/wrpac-ca-workflows
+          ref: ${{ inputs.workflows-ref }}
+          path: .wrpac-ca
+
+      - name: Install siros-wrpac-tool ${{ inputs.tool-version }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: .wrpac-ca/scripts/install-tool.sh "${{ inputs.tool-version }}" "${{ inputs.tool-sha256-amd64 }}" "${{ inputs.tool-sha256-arm64 }}"
+
+      - name: Plan
+        id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if [[ ! -f state/deployment/register.json ]]; then
+            echo "::error::${{ inputs.state-repo }} has no deployment yet; run the bootstrap workflow first"
+            exit 1
+          fi
+          siros-wrpac-tool apply -d state/deployment --from clients --dry-run | tee plan.txt
+          gh pr view "${{ github.event.pull_request.number }}" --json files --jq '.files[].path' > changed.txt
+          .wrpac-ca/scripts/plan-guard.sh plan.txt changed.txt
+
+      - name: Comment
+        if: always() && github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          {
+            echo "### Registration plan"
+            echo
+            if [[ -s plan.txt ]]; then
+              echo '```'; cat plan.txt; echo '```'
+            else
+              echo "Plan failed; see the *plan* check for the error."
+            fi
+            echo
+            echo "_siros-wrpac-tool ${{ inputs.tool-version }} · dry run against \`${{ inputs.state-repo }}\` · nothing was signed._"
+          } > comment.md
+          .wrpac-ca/scripts/pr-comment.sh "${{ github.repository }}" "${{ github.event.pull_request.number }}" wrpac-plan comment.md

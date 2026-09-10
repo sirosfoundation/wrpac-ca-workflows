@@ -1,0 +1,109 @@
+# Emergency revocation without waiting for a pull request. Revokes in the
+# register and republishes at once; the spec catches up afterwards.
+#
+# Until the spec says `revoked: true`, apply would read the register as "revoked
+# out of band, spec says active" and re-register the client. The apply workflow's
+# guard refuses that unless the spec itself was edited in the same change, and
+# this workflow opens an issue asking the registrar team to make that edit.
+name: revoke
+
+on:
+  workflow_call:
+    inputs:
+      client:
+        description: client id (the spec's filename stem); resolved to its active serial
+        required: true
+        type: string
+      reason:
+        description: RFC 5280 CRLReason code (1 keyCompromise, 4 superseded, 5 cessationOfOperation)
+        type: number
+        default: 0
+      state-repo: { required: true, type: string }
+      runner-group: { type: string, default: signers }
+      environment: { type: string, default: ca }
+      pkcs11-conf: { type: string, default: /etc/yubihsm_pkcs11.conf }
+      scheme-name: { type: string, default: SIROS wallet-relying party trust anchors }
+      operator: { type: string, default: SIROS Foundation }
+      territory: { type: string, default: SE }
+      tool-version: { type: string, default: v0.3.0 }
+      tool-sha256-amd64: { type: string, default: 029ce1e69b4ea03fbe20603f8cd7554086307d2fefe1d5af4b868ac12573ee72 }
+      tool-sha256-arm64: { type: string, default: 204c02b3fed488552c910490e489b723f3aa0e407c3bf1420e023d5d7a8bf311 }
+      workflows-ref: { type: string, default: main }
+    secrets:
+      YUBIHSM_PIN: { required: true }
+      STATE_DEPLOY_KEY: { required: true }
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  revoke:
+    runs-on:
+      group: ${{ inputs.runner-group }}
+      labels: [self-hosted, Linux]
+    environment: ${{ inputs.environment }}
+    concurrency:
+      group: wrpac-ca-${{ github.repository }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: ${{ inputs.state-repo }}
+          ssh-key: ${{ secrets.STATE_DEPLOY_KEY }}
+          path: state
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: sirosfoundation/wrpac-ca-workflows
+          ref: ${{ inputs.workflows-ref }}
+          path: .wrpac-ca
+      - name: Install siros-wrpac-tool ${{ inputs.tool-version }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: .wrpac-ca/scripts/install-tool.sh "${{ inputs.tool-version }}" "${{ inputs.tool-sha256-amd64 }}" "${{ inputs.tool-sha256-arm64 }}"
+
+      - name: Resolve the active serial
+        id: serial
+        run: |
+          set -euo pipefail
+          serial="$(jq -r --arg id "${{ inputs.client }}" \
+            '.entries | to_entries[] | select(.value.client_id == $id and (.value.superseded // false) == false and (.value.revoked // false) == false) | .key' \
+            state/deployment/register.json)"
+          if [[ -z "$serial" ]]; then
+            echo "::error::no active certificate for client '${{ inputs.client }}'"; exit 1
+          fi
+          echo "serial=$serial" >> "$GITHUB_OUTPUT"
+
+      - name: Revoke and republish
+        env:
+          SIROS_WRPAC_PKCS11_PIN: ${{ secrets.YUBIHSM_PIN }}
+          YUBIHSM_PKCS11_CONF: ${{ inputs.pkcs11-conf }}
+        run: |
+          set -euo pipefail
+          siros-wrpac-tool revoke -d state/deployment --reason "${{ inputs.reason }}" "${{ steps.serial.outputs.serial }}"
+          siros-wrpac-tool lote -d state/deployment --scheme-name "${{ inputs.scheme-name }}" --operator "${{ inputs.operator }}" --territory "${{ inputs.territory }}"
+          siros-wrpac-tool tsl  -d state/deployment --scheme-name "${{ inputs.scheme-name }}" --operator "${{ inputs.operator }}" --territory "${{ inputs.territory }}"
+
+      - name: Commit state
+        id: commit
+        run: .wrpac-ca/scripts/commit-state.sh state "revoke ${{ inputs.client }} (${{ steps.serial.outputs.serial }}, reason ${{ inputs.reason }})"
+
+      - name: Open the reconciliation issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh issue create --repo "${{ github.repository }}" \
+            --title "Reconcile spec after emergency revocation of ${{ inputs.client }}" \
+            --body "$(cat <<EOM
+          \`${{ inputs.client }}\` (serial \`${{ steps.serial.outputs.serial }}\`) was revoked out of band by @${{ github.actor }} with reason ${{ inputs.reason }}. The CRL and status list are republished: https://github.com/${{ inputs.state-repo }}/commit/${{ steps.commit.outputs.sha }}
+
+          The spec still says the client is active. Open a pull request setting
+
+          \`\`\`yaml
+          revoked: true
+          revocation_reason: ${{ inputs.reason }}
+          \`\`\`
+
+          in \`clients/${{ inputs.client }}.yaml\`. Until that merges, the apply workflow refuses to re-register this client unless its spec is edited deliberately.
+          EOM
+          )"

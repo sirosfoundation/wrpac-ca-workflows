@@ -1,0 +1,61 @@
+# Re-sign the CRL, status list, LoTE and TSL so they stay inside the validity
+# the instance chose at bootstrap. The caller schedules this well inside the
+# shorter of --crl-validity and --status-list-validity.
+name: publish
+
+on:
+  workflow_call:
+    inputs:
+      state-repo: { required: true, type: string }
+      runner-group: { type: string, default: signers }
+      environment: { type: string, default: ca }
+      pkcs11-conf: { type: string, default: /etc/yubihsm_pkcs11.conf }
+      scheme-name: { type: string, default: SIROS wallet-relying party trust anchors }
+      operator: { type: string, default: SIROS Foundation }
+      territory: { type: string, default: SE }
+      tool-version: { type: string, default: v0.3.0 }
+      tool-sha256-amd64: { type: string, default: 029ce1e69b4ea03fbe20603f8cd7554086307d2fefe1d5af4b868ac12573ee72 }
+      tool-sha256-arm64: { type: string, default: 204c02b3fed488552c910490e489b723f3aa0e407c3bf1420e023d5d7a8bf311 }
+      workflows-ref: { type: string, default: main }
+    secrets:
+      YUBIHSM_PIN: { required: true }
+      STATE_DEPLOY_KEY: { required: true }
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on:
+      group: ${{ inputs.runner-group }}
+      labels: [self-hosted, Linux]
+    environment: ${{ inputs.environment }}
+    concurrency:
+      group: wrpac-ca-${{ github.repository }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: ${{ inputs.state-repo }}
+          ssh-key: ${{ secrets.STATE_DEPLOY_KEY }}
+          path: state
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: sirosfoundation/wrpac-ca-workflows
+          ref: ${{ inputs.workflows-ref }}
+          path: .wrpac-ca
+      - name: Install siros-wrpac-tool ${{ inputs.tool-version }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: .wrpac-ca/scripts/install-tool.sh "${{ inputs.tool-version }}" "${{ inputs.tool-sha256-amd64 }}" "${{ inputs.tool-sha256-arm64 }}"
+      - name: Publish
+        env:
+          SIROS_WRPAC_PKCS11_PIN: ${{ secrets.YUBIHSM_PIN }}
+          YUBIHSM_PKCS11_CONF: ${{ inputs.pkcs11-conf }}
+        run: |
+          set -euo pipefail
+          siros-wrpac-tool publish -d state/deployment
+          siros-wrpac-tool lote -d state/deployment --scheme-name "${{ inputs.scheme-name }}" --operator "${{ inputs.operator }}" --territory "${{ inputs.territory }}"
+          siros-wrpac-tool tsl  -d state/deployment --scheme-name "${{ inputs.scheme-name }}" --operator "${{ inputs.operator }}" --territory "${{ inputs.territory }}"
+      - name: Commit state
+        run: .wrpac-ca/scripts/commit-state.sh state "publish (scheduled, ${{ github.run_id }})"

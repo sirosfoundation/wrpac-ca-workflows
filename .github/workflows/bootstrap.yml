@@ -1,0 +1,91 @@
+# Create an instance's deployment once: the Access CA and registrar
+# certificates over keys that already exist on the HSM, and the first
+# CRL, status list, LoTE and TSL. Refuses to run against an initialised state
+# repository, because replacing the CA invalidates every certificate under it.
+name: bootstrap
+
+on:
+  workflow_call:
+    inputs:
+      base-url:
+        description: permanent public base URL; baked into every certificate
+        required: true
+        type: string
+      ca-name: { required: true, type: string }
+      registrar-name: { required: true, type: string }
+      organization: { required: true, type: string }
+      country: { type: string, default: SE }
+      pkcs11-module: { type: string, default: /usr/lib/x86_64-linux-gnu/pkcs11/yubihsm_pkcs11.so }
+      pkcs11-token: { type: string, default: YubiHSM }
+      ca-key-label: { type: string, default: wrpac-ca }
+      registrar-key-label: { type: string, default: wrpac-registrar }
+      crl-validity: { type: string, default: 168h }
+      status-list-validity: { type: string, default: 168h }
+      state-repo: { required: true, type: string }
+      runner-group: { type: string, default: signers }
+      environment: { type: string, default: ca }
+      pkcs11-conf: { type: string, default: /etc/yubihsm_pkcs11.conf }
+      scheme-name: { type: string, default: SIROS wallet-relying party trust anchors }
+      operator: { type: string, default: SIROS Foundation }
+      territory: { type: string, default: SE }
+      tool-version: { type: string, default: v0.3.0 }
+      tool-sha256-amd64: { type: string, default: 029ce1e69b4ea03fbe20603f8cd7554086307d2fefe1d5af4b868ac12573ee72 }
+      tool-sha256-arm64: { type: string, default: 204c02b3fed488552c910490e489b723f3aa0e407c3bf1420e023d5d7a8bf311 }
+      workflows-ref: { type: string, default: main }
+    secrets:
+      YUBIHSM_PIN: { required: true }
+      STATE_DEPLOY_KEY: { required: true }
+
+permissions:
+  contents: read
+
+jobs:
+  bootstrap:
+    runs-on:
+      group: ${{ inputs.runner-group }}
+      labels: [self-hosted, Linux]
+    environment: ${{ inputs.environment }}
+    concurrency:
+      group: wrpac-ca-${{ github.repository }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: ${{ inputs.state-repo }}
+          ssh-key: ${{ secrets.STATE_DEPLOY_KEY }}
+          path: state
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: sirosfoundation/wrpac-ca-workflows
+          ref: ${{ inputs.workflows-ref }}
+          path: .wrpac-ca
+      - name: Install siros-wrpac-tool ${{ inputs.tool-version }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: .wrpac-ca/scripts/install-tool.sh "${{ inputs.tool-version }}" "${{ inputs.tool-sha256-amd64 }}" "${{ inputs.tool-sha256-arm64 }}"
+
+      - name: Init
+        env:
+          SIROS_WRPAC_PKCS11_PIN: ${{ secrets.YUBIHSM_PIN }}
+          YUBIHSM_PKCS11_CONF: ${{ inputs.pkcs11-conf }}
+        run: |
+          set -euo pipefail
+          if [[ -f state/deployment/register.json ]]; then
+            echo "::error::${{ inputs.state-repo }} is already initialised; refusing to replace its CA"; exit 1
+          fi
+          siros-wrpac-tool init -d state/deployment \
+            --base-url "${{ inputs.base-url }}" \
+            --ca-name "${{ inputs.ca-name }}" --registrar-name "${{ inputs.registrar-name }}" \
+            --organization "${{ inputs.organization }}" --country "${{ inputs.country }}" \
+            --crl-validity "${{ inputs.crl-validity }}" --status-list-validity "${{ inputs.status-list-validity }}" \
+            --pkcs11-module "${{ inputs.pkcs11-module }}" --pkcs11-token "${{ inputs.pkcs11-token }}" \
+            --ca-key-label "${{ inputs.ca-key-label }}" --registrar-key-label "${{ inputs.registrar-key-label }}"
+          siros-wrpac-tool lote -d state/deployment --scheme-name "${{ inputs.scheme-name }}" --operator "${{ inputs.operator }}" --territory "${{ inputs.territory }}"
+          siros-wrpac-tool tsl  -d state/deployment --scheme-name "${{ inputs.scheme-name }}" --operator "${{ inputs.operator }}" --territory "${{ inputs.territory }}"
+          # Nothing secret may be committed. With PKCS#11 the tool writes no key
+          # file; make that a hard check rather than a belief.
+          if ls state/deployment/*.key >/dev/null 2>&1; then
+            echo "::error::a private key file was written to the deployment; aborting before commit"; exit 1
+          fi
+      - name: Commit state
+        run: .wrpac-ca/scripts/commit-state.sh state "bootstrap ${{ inputs.base-url }}"

@@ -1,0 +1,29 @@
+# Emergency revocation by client id. The registrar team approves the job as
+# for any signing run, and gets an issue to reconcile the spec afterwards.
+name: revoke
+on:
+  workflow_dispatch:
+    inputs:
+      client:
+        description: client id (filename stem under clients/)
+        required: true
+        type: string
+      reason:
+        description: RFC 5280 CRLReason (1 keyCompromise, 4 superseded, 5 cessationOfOperation)
+        required: true
+        type: choice
+        options: ['0', '1', '3', '4', '5', '9']
+permissions:
+  contents: read
+  issues: write
+jobs:
+  revoke:
+    uses: sirosfoundation/wrpac-ca-workflows/.github/workflows/revoke.yml@main
+    with:
+      client: ${{ inputs.client }}
+      reason: ${{ fromJSON(inputs.reason) }}
+      state-repo: __STATE_REPO__
+      scheme-name: __SCHEME_NAME__
+      operator: __ORG__
+      territory: __COUNTRY__
+    secrets: inherit
