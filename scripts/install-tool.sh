@@ -20,7 +20,7 @@ esac
 ASSET="siros-wrpac-tool-linux-${ARCH}"
 
 tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
-curl -fsSL --retry 3 -o "$tmp/$ASSET" \
+curl -fsSL --retry 5 --retry-all-errors --retry-delay 3 -o "$tmp/$ASSET" \
   "https://github.com/${REPO}/releases/download/${VERSION}/${ASSET}"
 
 GOT="$(sha256sum "$tmp/$ASSET" | cut -d' ' -f1)"
