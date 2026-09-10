@@ -8,6 +8,15 @@ device. Decide at generation whether the keys may ever be backed up:
 Domain 3 is used below; pick an unused one per instance so the operational
 auth key cannot see another instance's keys on a shared device.
 
+**Check the argument order before typing.** yubihsm-shell's positional syntax
+has changed between releases (Yubico's reference lists `put authkey` as
+`session, id, label, domains, capabilities, algorithm, key` in one version and
+`..., capabilities, delegated_capabilities, password` in another). Run
+`help put authkey`, `help generate wrapkey`, `help get wrapped`, `help put
+wrapped` and `help put option` on the installed version and adapt. What must
+not change: the labels, the domain, `sign-ecdsa` as the only capability on the
+operational key, and `exportable-under-wrap` on the two signing keys.
+
 ## On the primary
 
 ```
