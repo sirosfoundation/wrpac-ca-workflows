@@ -2,7 +2,8 @@ name: apply
 on:
   push:
     branches: [main]
-    paths: [clients/**]
+    # Specs and CSRs only: a README edit under clients/ must not start a signing job.
+    paths: ['clients/*.yaml', 'clients/*.yml', 'clients/*.csr']
 permissions:
   contents: read
   pull-requests: write
