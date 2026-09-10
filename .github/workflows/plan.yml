@@ -54,12 +54,18 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          gh pr view "${{ github.event.pull_request.number }}" --json files --jq '.files[].path' > changed.txt
+          specs_changed=false
+          grep -Eq '^clients/[^/]+\.(ya?ml|csr)$' changed.txt && specs_changed=true
           if [[ ! -f state/deployment/register.json ]]; then
-            echo "::error::${{ inputs.state-repo }} has no deployment yet; run the bootstrap workflow first"
-            exit 1
+            if [[ "$specs_changed" == true ]]; then
+              echo "::error::${{ inputs.state-repo }} has no deployment yet; run the bootstrap workflow before registering parties"
+              exit 1
+            fi
+            echo "state not bootstrapped and no registration changes in this pull request; nothing to plan" | tee plan.txt
+            exit 0
           fi
           siros-wrpac-tool apply -d state/deployment --from clients --dry-run | tee plan.txt
-          gh pr view "${{ github.event.pull_request.number }}" --json files --jq '.files[].path' > changed.txt
           .wrpac-ca/scripts/plan-guard.sh plan.txt changed.txt
 
       - name: Comment
