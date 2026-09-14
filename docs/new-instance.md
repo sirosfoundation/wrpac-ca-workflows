@@ -66,10 +66,15 @@ The runner joins the `signers` group.
 
 ## 8. Bootstrap
 
+Until this step, keep the registry repo's `publish` workflow **disabled**
+(`gh workflow disable publish.yml -R <registry>`): its schedule can only fail
+at secret validation while `YUBIHSM_PIN` does not exist, and every failure is
+a red run and an email.
+
 Run the registry repo's `bootstrap` workflow once with the parameters from
 the table. It refuses to run twice. Check the first Pages deploy at
 `https://<domain>/register.json`, `/crl.der`, `/status-list.jwt`,
-`/lote.json`, `/tsl.xml`.
+`/lote.json`, `/tsl.xml`. Then `gh workflow enable publish.yml -R <registry>`.
 
 ## 9. Publish cadence
 
