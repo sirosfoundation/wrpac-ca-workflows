@@ -12,13 +12,13 @@ on:
         type: string
       tool-version:
         type: string
-        default: v0.3.0
+        default: v0.3.1
       tool-sha256-amd64:
         type: string
-        default: 029ce1e69b4ea03fbe20603f8cd7554086307d2fefe1d5af4b868ac12573ee72
+        default: 3e35f4deee72e830f8f81a600a72a8c5d1ae481c8d52e4cc502e40a31211c649
       tool-sha256-arm64:
         type: string
-        default: 204c02b3fed488552c910490e489b723f3aa0e407c3bf1420e023d5d7a8bf311
+        default: e1845537fe95652cf2b0d66516f71db7ad06363147fe93aba16d8ffb8349bbc9
       workflows-ref:
         description: ref of sirosfoundation/wrpac-ca-workflows to take scripts from (match the `uses:` ref)
         type: string
