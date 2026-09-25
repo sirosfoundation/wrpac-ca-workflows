@@ -20,6 +20,7 @@ on:
     secrets:
       YUBIHSM_PIN: { required: true }
       STATE_DEPLOY_KEY: { required: true }
+      HEARTBEAT_URL: { required: false }
 
 permissions:
   contents: read
@@ -59,3 +60,8 @@ jobs:
           siros-wrpac-tool tsl  -d state/deployment --scheme-name "${{ inputs.scheme-name }}" --operator "${{ inputs.operator }}" --territory "${{ inputs.territory }}"
       - name: Commit state
         run: .wrpac-ca/scripts/commit-state.sh state "publish (scheduled, ${{ github.run_id }})"
+      - name: Ping heartbeat monitor
+        if: ${{ secrets.HEARTBEAT_URL != '' }}
+        env:
+          HEARTBEAT_URL: ${{ secrets.HEARTBEAT_URL }}
+        run: curl -fsS --max-time 10 "$HEARTBEAT_URL" >/dev/null 2>&1 || echo "Warning: heartbeat ping failed"
